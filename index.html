@@ -1,0 +1,1071 @@
+!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nombres chanceux - Action 4</title>
+<style>
+    body {
+        margin: 0;
+        font-family: Arial, sans-serif;
+        background: #dddddd;
+        text-align: center;
+        user-select: none;
+    }
+    #barre {
+        padding: 10px;
+    }
+    #nombreActif {
+        font-size: 32px;
+        font-weight: bold;
+        min-height: px;
+    }
+    #message {
+        font-size: 20px;
+        font-weight: bold;
+        margin: 8px;
+    }
+    
+    button {
+        font-size: 15px;
+        padding: 6px 12px;
+        margin: 4px;
+    }
+    dialog {
+        border: 1px solid #777;
+        border-radius: 8px;
+        padding: 16px 22px;
+    }
+    dialog label {
+        display: grid;
+        grid-template-columns: 100px 160px;
+        gap: 8px;
+        margin: 8px 0;
+        text-align: left;
+    }
+    #inputCodePartie {
+        font-size: 24px;
+        text-transform: uppercase;
+        text-align: center;
+        letter-spacing: 4px;
+    }
+    canvas {
+        display: block;
+        margin: 0 auto 20px auto;
+        background: #dddddd;
+        touch-action: manipulation;
+    }
+</style>
+</head>
+<body>
+<div id="barre">
+    <div id="nombreActif">-</div>
+    <div id="message">Clic gauche sur un pion pour le choisir.</div>
+    <button id="boutonParametres">Nouvelle partie</button>
+    <button id="boutonCreerPartie">Créer partie distante</button>
+    <button id="boutonRejoindrePartie">Rejoindre partie</button>
+    <button id="boutonAToi">À toi !</button>
+    <button id="boutonRegles">Règles du jeu</button>
+    <button id="boutonEnvoyerMessage">Envoyer message</button>
+    <span id="codePartie">Aucune partie</span>
+</div>
+
+<canvas id="jeu"></canvas>
+
+<dialog id="dialogParametres">
+    <h3>Paramètres</h3>
+    <label>Lignes <input id="inputLignes" type="number" min="2" value="5"></label>
+    <label>Colonnes <input id="inputColonnes" type="number" min="2" value="5"></label>
+    <label>Joueur 1 <input id="inputJoueur1" type="text" value="Joueur 1"></label>
+    <label>Joueur 2 <input id="inputJoueur2" type="text" value="Joueur 2"></label>
+    <label>Commence
+        <select id="inputCommence">
+            <option value="1">Joueur 1</option>
+            <option value="2">Joueur 2</option>
+        </select>
+    </label>
+    <button id="boutonLancer">Lancer</button>
+</dialog>
+<dialog id="dialogRegles">
+    <h3>Règles du jeu</h3>
+    <p>Le but du jeu est de compléter sa grille.</p>
+    <p>Les nombres doivent être classés dans l’ordre croissant :</p>
+    <p>de gauche à droite sur chaque ligne,<br>
+       et de haut en bas dans chaque colonne.</p>
+    <p>À son tour, un joueur peut prendre un pion, le placer, l’échanger ou le remettre à la pioche.</p>
+    <p>Le bouton "A toi" passe la main à l'adversaire.</p>
+    <p>Le premier joueur qui remplit sa grille gagne.</p>
+    <button id="boutonFermerRegles">Fermer</button>
+</dialog>
+<dialog id="dialogRejoindre">
+    <h3>Rejoindre une partie</h3>
+    <p>Entrez le code de la partie créée sur l’autre appareil.</p>
+    <label>Code <input id="inputCodePartie" type="text" maxlength="4" autocapitalize="characters" autocomplete="off" placeholder="AB12"></label>
+    <button id="boutonValiderCodePartie">Rejoindre</button>
+    <button id="boutonAnnulerCodePartie">Annuler</button>
+</dialog>
+<script type="module">
+'use strict';
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getDatabase, ref, set, get, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCNOujBHAg7jGD0Dbhbj3DerKBFjxZhIek",
+  authDomain: "numbers-49091.firebaseapp.com",
+  databaseURL: "https://numbers-49091-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "numbers-49091",
+  storageBucket: "numbers-49091.firebasestorage.app",
+  messagingSenderId: "762941555289",
+  appId: "1:762941555289:web:c6c4b563dc437cb4a26748"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+
+const CASE = 50;
+const RAYON_PION = 18;
+const MARGE = 15;
+const ESPACE = 15;
+const LARGEUR_ZONE_PIONS = 260;
+
+const canvas = document.getElementById('jeu');
+const ctx = canvas.getContext('2d');
+const labelNombre = document.getElementById('nombreActif');
+const labelMessage = document.getElementById('message');
+const dialogParametres = document.getElementById('dialogParametres');
+const dialogRegles = document.getElementById('dialogRegles');
+const dialogRejoindre = document.getElementById('dialogRejoindre');
+const inputCodePartie = document.getElementById('inputCodePartie');
+const idAppareil = Math.random().toString(36).substring(2);
+
+let CONFIG = {
+    lignes: 4,
+    colonnes: 4,
+    joueur1: 'Joueur 1',
+    joueur2: 'Joueur 2',
+    commence: 1
+};
+
+let joueurActif = 'gauche';
+let grille1 = [];
+let grille2 = [];
+let pions = [];
+let pionSelectionne = null;
+let origineSelection = null;
+let pionDuTour = null;
+let actionFaiteCeTour = false;
+let piocheUtiliseeCeTour = false;
+//let db = null;
+
+function melanger(tableau) {
+    for (let i = tableau.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tableau[i], tableau[j]] = [tableau[j], tableau[i]];
+    }
+}
+
+function positionsZones() {
+    const largeurPlateau = CONFIG.colonnes * CASE;
+    const xJoueur1 = MARGE;
+    const yJoueur1 = MARGE;
+    const xPions = xJoueur1 + largeurPlateau + ESPACE;
+    const yPions = MARGE;
+    const xJoueur2 = xPions + LARGEUR_ZONE_PIONS + ESPACE;
+    const yJoueur2 = MARGE;
+    return { xJoueur1, yJoueur1, xPions, yPions, xJoueur2, yJoueur2 };
+}
+
+function reglerTailleCanvas() {
+    const largeurPlateau = CONFIG.colonnes * CASE;
+    const hauteurPlateau = CONFIG.lignes * CASE;
+    canvas.width = MARGE + largeurPlateau + ESPACE + LARGEUR_ZONE_PIONS + ESPACE + largeurPlateau + MARGE;
+    canvas.height = hauteurPlateau + 2 * MARGE;
+}
+
+function creerPions(valeursPioche = null) {
+    const nbCases = CONFIG.lignes * CONFIG.colonnes;
+    const valeurMax = Math.floor(nbCases * 1.25);
+
+    let valeurs = [];
+
+    if (valeursPioche) {
+        valeurs = [...valeursPioche];
+    } else {
+        for (let v = 1; v <= valeurMax; v++) {
+            valeurs.push(v, v);
+        }
+        melanger(valeurs);
+    }
+
+    const { xPions, yPions } = positionsZones();
+    const resultat = [];
+    const colonnesPions = 8;
+    const ecart = 30;
+
+    valeurs.forEach((valeur, index) => {
+        const lig = Math.floor(index / colonnesPions);
+        const col = index % colonnesPions;
+        resultat.push({
+            id: index,
+            valeur,
+            visible: false,
+            selectionne: false,
+            zone: 'pioche',
+            lig: null,
+            col: null,
+            x: xPions + 25 + col * ecart,
+            y: yPions + 25 + lig * ecart
+        });
+    });
+
+    return resultat;
+}
+
+function nouvellePartie() {
+    joueurActif = CONFIG.commence === 1 ? 'gauche' : 'droite';
+    grille1 = Array.from({ length: CONFIG.lignes }, () => Array(CONFIG.colonnes).fill(null));
+    grille2 = Array.from({ length: CONFIG.lignes }, () => Array(CONFIG.colonnes).fill(null));
+    reglerTailleCanvas();
+    pions = creerPions();
+    pionSelectionne = null;
+    origineSelection = null;
+    pionDuTour = null;
+    actionFaiteCeTour = false;
+    piocheUtiliseeCeTour = false;
+    labelNombre.textContent = '-';
+    labelMessage.textContent = `Clic gauche sur un pion pour le choisir. À jouer : ${nomJoueurActif()}`;
+    dessinerTout();
+}
+
+function dessinerTexte(x, y, texte, options = {}) {
+    ctx.font = options.font || '14px Arial';
+    ctx.fillStyle = options.fill || 'black';
+    ctx.textAlign = options.align || 'left';
+    ctx.textBaseline = options.baseline || 'alphabetic';
+    ctx.fillText(texte, x, y);
+}
+
+function dessinerPlateau(grille, xDepart, yDepart, titre) {
+    dessinerTexte(xDepart, yDepart - 15, titre, { font: 'bold 14px Arial' });
+
+    for (let lig = 0; lig < grille.length; lig++) {
+        for (let col = 0; col < grille[lig].length; col++) {
+            const indexPion = grille[lig][col];
+            const x1 = xDepart + col * CASE;
+            const y1 = yDepart + lig * CASE;
+            const x2 = x1 + CASE;
+            const y2 = y1 + CASE;
+
+            let couleurFond = 'white';
+
+            if (
+                (joueurActif === 'gauche' && titre === CONFIG.joueur1) ||
+                (joueurActif === 'droite' && titre === CONFIG.joueur2)
+            ) {
+                couleurFond = '#bcdcff';
+            }
+
+            ctx.fillStyle = couleurFond;
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 1;
+            ctx.fillRect(x1, y1, CASE, CASE);
+            ctx.strokeRect(x1, y1, CASE, CASE);
+            
+            if (indexPion !== null) {
+                const pion = pions[indexPion];
+                const cx = (x1 + x2) / 2;
+                const cy = (y1 + y2) / 2;
+
+                ctx.beginPath();
+                ctx.arc(cx, cy, RAYON_PION, 0, Math.PI * 2);
+
+                ctx.fillStyle =
+                    pion.selectionne
+                        ? '#99dd99'
+                       : 'white';
+
+                ctx.fill();
+
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                dessinerTexte(cx, cy, String(pion.valeur), {
+                    font: 'bold 24px Arial',
+                    align: 'center',
+                    baseline: 'middle'
+                });
+            }
+        }
+    }
+}
+
+function dessinerPions() {
+    const { xPions, yPions } = positionsZones();
+    const nbPions = pions.length;
+
+    dessinerTexte(
+        xPions + 65,
+        yPions - 5,
+        `PIOCHE   Nb. de pions : ${nbPions}`,
+        {
+            font: '12px Arial'
+        }
+    );
+
+    pions.forEach((pion) => {
+        if (pion.zone !== 'pioche') return;
+
+        ctx.beginPath();
+        ctx.arc(pion.x + 2, pion.y + 2, RAYON_PION, 0, Math.PI * 2);
+        ctx.fillStyle = '#dddddd';
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.arc(pion.x, pion.y, RAYON_PION, 0, Math.PI * 2);
+        ctx.fillStyle = pion.selectionne ? '#99dd99' : 'white';
+        ctx.fill();
+        ctx.strokeStyle = 'black';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        if (pion.visible) {
+            dessinerTexte(pion.x, pion.y, String(pion.valeur), {
+                font: 'bold 20px Arial',
+                align: 'center',
+                baseline: 'middle'
+            });
+        }
+    });
+}
+
+function dessinerTout() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#dddddd';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const pos = positionsZones();
+    dessinerPlateau(grille1, pos.xJoueur1, pos.yJoueur1, CONFIG.joueur1);
+    dessinerPlateau(grille2, pos.xJoueur2, pos.yJoueur2, CONFIG.joueur2);
+    dessinerPions();
+}
+
+function coordonneesCanvas(event) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: event.clientX - rect.left,
+        y: event.clientY - rect.top
+    };
+}
+
+function casePlateauDepuisCoordonnees(x, y, xDepart, yDepart) {
+    const col = Math.floor((x - xDepart) / CASE);
+    const lig = Math.floor((y - yDepart) / CASE);
+
+    if (lig < 0 || lig >= CONFIG.lignes) return null;
+    if (col < 0 || col >= CONFIG.colonnes) return null;
+
+    return { lig, col };
+}
+
+function pionDepuisCoordonnees(x, y) {
+    for (let index = 0; index < pions.length; index++) {
+        const pion = pions[index];
+        if (pion.zone !== 'pioche') continue;
+
+        const dx = x - pion.x;
+        const dy = y - pion.y;
+        if (dx * dx + dy * dy <= RAYON_PION * RAYON_PION) {
+            return index;
+        }
+    }
+    return null;
+}
+
+function placementValide(grille, lig, col, valeur) {
+    for (let c = 0; c < CONFIG.colonnes; c++) {
+        const indexPion = grille[lig][c];
+        if (indexPion === null) continue;
+
+        const v = pions[indexPion].valeur;
+        if (c < col && v >= valeur) return false;
+        if (c > col && v <= valeur) return false;
+    }
+
+    for (let l = 0; l < CONFIG.lignes; l++) {
+        const indexPion = grille[l][col];
+        if (indexPion === null) continue;
+
+        const v = pions[indexPion].valeur;
+        if (l < lig && v >= valeur) return false;
+        if (l > lig && v <= valeur) return false;
+    }
+
+    return true;
+}
+
+function retirerPionDeSonEmplacement(indexPion) {
+    const pion = pions[indexPion];
+
+    // Sécurité distant : on enlève ce pion de toutes les cases où il apparaît.
+    // Ainsi, même si sa zone mémorisée est décalée entre deux appareils,
+    // la grille visuelle est toujours correctement vidée.
+    for (let lig = 0; lig < CONFIG.lignes; lig++) {
+        for (let col = 0; col < CONFIG.colonnes; col++) {
+            if (grille1[lig][col] === indexPion) grille1[lig][col] = null;
+            if (grille2[lig][col] === indexPion) grille2[lig][col] = null;
+        }
+    }
+
+    pion.zone = 'pioche';
+    pion.lig = null;
+    pion.col = null;
+}
+
+function remettrePionALaPioche(indexPion) {
+    retirerPionDeSonEmplacement(indexPion);
+    pions[indexPion].selectionne = false;
+    // visible reste inchangé : un pion retourné reste visible.
+}
+
+function nomJoueurActif() {
+    return joueurActif === 'gauche' ? CONFIG.joueur1 : CONFIG.joueur2;
+}
+
+function changerJoueur() {
+    joueurActif = joueurActif === 'gauche' ? 'droite' : 'gauche';
+}
+
+function estMonTour() {
+    // En jeu local, les deux grilles sont sur le même écran : pas de verrou par appareil.
+    if (!codePartieActuelle || roleLocal === null) return true;
+
+    // En jeu distant, le créateur est le joueur gauche,
+    // celui qui rejoint est le joueur droite.
+    return joueurActif === roleLocal;
+}
+
+function messagePasMonTour() {
+    labelMessage.textContent = `Ce n’est pas ton tour. À jouer : ${nomJoueurActif()}`;
+}
+
+function messageActionDejaFaite() {
+    labelMessage.textContent = 'Tu as déjà joué ce tour. Clique sur À toi ! pour passer au joueur suivant.';
+}
+
+function terminerActionDuTour() {
+    origineSelection = null;
+    
+    pionSelectionne = null;
+    pions.forEach(p => p.selectionne = false);
+    labelNombre.textContent = '-';
+}
+
+function clicGauche(x, y) {
+    if (!estMonTour()) {
+        messagePasMonTour();
+        return;
+    }
+
+    //if (actionFaiteCeTour) {
+        //messageActionDejaFaite();
+        //return;
+    //}
+
+    if (pionSelectionne !== null) {
+        labelMessage.textContent = 'Un pion est déjà actif : clique sur une case ou sur la pioche.';
+        return;
+    }
+
+    let index = pionDepuisCoordonnees(x, y);
+    if (index !== null && piocheUtiliseeCeTour) {
+        labelMessage.textContent = 'Tu as déjà pris un pion dans la pioche ce tour. Clique sur À toi !';
+        return;
+    }
+
+    if (index === null) {
+        const pos = positionsZones();
+        let caseInfo = casePlateauDepuisCoordonnees(x, y, pos.xJoueur1, pos.yJoueur1);
+        let grille = grille1;
+        let zoneCliquee = 'joueur1';
+
+        if (caseInfo === null) {
+            caseInfo = casePlateauDepuisCoordonnees(x, y, pos.xJoueur2, pos.yJoueur2);
+            grille = grille2;
+            zoneCliquee = 'joueur2';
+        }
+
+        if (caseInfo === null) return;
+
+        if (zoneCliquee === 'joueur1' && joueurActif !== 'gauche') {
+            labelMessage.textContent = 'Ce n’est pas à Joueur 1 de jouer.';
+            return;
+        }
+
+        if (zoneCliquee === 'joueur2' && joueurActif !== 'droite') {
+            labelMessage.textContent = 'Ce n’est pas à Joueur 2 de jouer.';
+            return;
+        }
+
+        index = grille[caseInfo.lig][caseInfo.col];
+        if (index === null) return;
+    }
+
+    pions.forEach(p => p.selectionne = false);
+    origineSelection = pions[index].zone;
+    pionSelectionne = index;
+    
+    if (origineSelection === 'pioche') {
+        pionDuTour = index;
+        piocheUtiliseeCeTour = true;
+    }
+    
+    pions[index].selectionne = true;
+    pions[index].visible = true;
+    if (codePartieActuelle) {
+        set(
+            ref(db, 'parties/' + codePartieActuelle + '/message'),
+            {
+                type: 'clicGauchePion',
+                indexPion: index,
+            }
+        );
+    }
+    
+    labelNombre.textContent = String(pions[index].valeur);
+    labelMessage.textContent = 'Pion choisi. Clique sur une case ou sur la pioche.';
+    dessinerTout();
+}
+
+function clicAction(x, y) {
+    if (!estMonTour()) {
+        messagePasMonTour();
+        return;
+    }
+
+    if (actionFaiteCeTour) {
+        messageActionDejaFaite();
+        return;
+    }
+
+    if (pionSelectionne === null) {
+        clicGauche(x, y);
+    } else {
+        jouerCoup(x, y);
+    }
+}
+
+async function jouerCoup(x, y) {
+    if (!estMonTour()) {
+        messagePasMonTour();
+        return;
+    }
+
+    if (actionFaiteCeTour) {
+        messageActionDejaFaite();
+        return;
+    }
+
+    if (pionSelectionne === null) {
+        labelMessage.textContent = 'Choisis d’abord un pion avec clic gauche.';
+        return;
+        
+    }
+
+    const pos = positionsZones();
+
+    if (x >= pos.xPions && x <= pos.xPions + LARGEUR_ZONE_PIONS) {
+        // ACTION 3 : un pion sélectionné sur sa grille peut être remis à la pioche.
+        // Le pion reprend sa place dans la pioche et reste visible.
+        const indexRetourPioche = pionSelectionne;
+        const origineRetour = origineSelection;
+
+        remettrePionALaPioche(indexRetourPioche);
+        terminerActionDuTour();
+        //changerJoueur();
+        labelMessage.textContent = origineRetour === 'pioche'
+            ? 'Pion pioché remis à la pioche. Clique sur À toi ! pour passer au joueur suivant.'
+            : 'Pion de grille remis à la pioche. Clique sur À toi ! pour passer au joueur suivant.';
+        dessinerTout();
+
+        if (codePartieActuelle) {
+            await set(
+                ref(db, 'parties/' + codePartieActuelle + '/message'),
+                {
+                    action: 'remettrePioche',
+                    emetteur: idAppareil,
+                    indexPion: indexRetourPioche,
+                    heure: Date.now()
+                }
+            );
+        }
+
+        return;
+    }
+
+    let grille = grille1;
+    let zone = 'joueur1';
+    let caseInfo = casePlateauDepuisCoordonnees(x, y, pos.xJoueur1, pos.yJoueur1);
+
+    if (caseInfo === null) {
+        caseInfo = casePlateauDepuisCoordonnees(x, y, pos.xJoueur2, pos.yJoueur2);
+        grille = grille2;
+        zone = 'joueur2';
+    }
+    
+    if (zone === 'joueur1' && joueurActif !== 'gauche') {
+        labelMessage.textContent = 'Ce n’est pas à Joueur 1 de jouer.';
+        return;
+    }
+
+    if (zone === 'joueur2' && joueurActif !== 'droite') {
+        labelMessage.textContent = 'Ce n’est pas à Joueur 2 de jouer.';
+        return;
+    }
+    
+    if (caseInfo === null) return;
+
+    // ACTION 2 : seule la pièce piochée ce tour peut être posée ou déplacée sur la grille.
+    if (pionSelectionne !== pionDuTour) {
+        labelMessage.textContent = 'Seul le pion pioché ce tour peut être posé ou déplacé sur la grille.';
+        return;
+    }
+
+    const { lig, col } = caseInfo;
+    const valeur = pions[pionSelectionne].valeur;
+
+    const zoneOrigine = pions[pionSelectionne].zone;
+    const ligOrigine = pions[pionSelectionne].lig;
+    const colOrigine = pions[pionSelectionne].col;
+
+    // On enlève provisoirement le pion sélectionné pour tester le placement
+    // sans qu'il se bloque lui-même dans sa ligne ou sa colonne.
+    retirerPionDeSonEmplacement(pionSelectionne);
+
+    if (!placementValide(grille, lig, col, valeur)) {
+        if (zoneOrigine === 'joueur1') {
+            grille1[ligOrigine][colOrigine] = pionSelectionne;
+            pions[pionSelectionne].zone = 'joueur1';
+            pions[pionSelectionne].lig = ligOrigine;
+            pions[pionSelectionne].col = colOrigine;
+        } else if (zoneOrigine === 'joueur2') {
+            grille2[ligOrigine][colOrigine] = pionSelectionne;
+            pions[pionSelectionne].zone = 'joueur2';
+            pions[pionSelectionne].lig = ligOrigine;
+            pions[pionSelectionne].col = colOrigine;
+        }
+
+        pions[pionSelectionne].selectionne = true;
+        labelMessage.textContent = 'Placement interdit.';
+        dessinerTout();
+        return;
+    }
+
+    // ACTION 4 : si la case est occupée, le pion pioché prend la place
+    // et l'ancien pion retourne à la pioche en restant visible.
+    const ancienPion = grille[lig][col];
+    if (ancienPion !== null) {
+        remettrePionALaPioche(ancienPion);
+        pions[ancienPion].visible = true;
+    }
+
+    grille[lig][col] = pionSelectionne;
+
+    pions[pionSelectionne].zone = zone;
+    pions[pionSelectionne].lig = lig;
+    pions[pionSelectionne].col = col;
+    pions[pionSelectionne].selectionne = false;
+
+    if (codePartieActuelle) {
+        await set(
+            ref(db, 'parties/' + codePartieActuelle + '/message'),
+            {
+                action: 'poser',
+                emetteur: idAppareil,
+
+                indexPion: pionSelectionne,
+                valeur: valeur,
+                lig: lig,
+                col: col,
+                zone: zone,
+                heure: Date.now()
+           }
+        );
+    }
+    piocheUtiliseeCeTour = true;
+    terminerActionDuTour();
+    //changerJoueur();
+    labelMessage.textContent = 'Pion posé. Clique sur À toi ! pour passer au joueur suivant.';
+    dessinerTout();
+}
+
+canvas.addEventListener('click', (event) => {
+    const { x, y } = coordonneesCanvas(event);
+    clicAction(x, y);
+});
+
+canvas.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+});
+
+// Sur écran tactile : si un pion est déjà choisi, un tap joue le coup.
+canvas.addEventListener('touchstart', (event) => {
+    event.preventDefault();
+    const touch = event.changedTouches[0];
+    const rect = canvas.getBoundingClientRect();
+    const x = touch.clientX - rect.left;
+    const y = touch.clientY - rect.top;
+
+    if (pionSelectionne === null) {
+        clicGauche(x, y);
+    } else {
+        jouerCoup(x, y);
+    }
+}, { passive: false });
+
+function ouvrirParametres() {
+    document.getElementById('inputLignes').value = CONFIG.lignes;
+    document.getElementById('inputColonnes').value = CONFIG.colonnes;
+    document.getElementById('inputJoueur1').value = CONFIG.joueur1;
+    document.getElementById('inputJoueur2').value = CONFIG.joueur2;
+    document.getElementById('inputCommence').value = String(CONFIG.commence);
+    dialogParametres.showModal();
+}
+
+function appliquerParametres() {
+    CONFIG.lignes = Number(document.getElementById('inputLignes').value);
+    CONFIG.colonnes = Number(document.getElementById('inputColonnes').value);
+    CONFIG.joueur1 = document.getElementById('inputJoueur1').value || 'Joueur 1';
+    CONFIG.joueur2 = document.getElementById('inputJoueur2').value || 'Joueur 2';
+    CONFIG.commence = Number(document.getElementById('inputCommence').value);
+    dialogParametres.close();
+    codePartieActuelle = null;
+    roleLocal = null;
+    document.getElementById('codePartie').textContent = 'Aucune partie';
+    nouvellePartie();
+}
+
+document.getElementById('boutonParametres').addEventListener('click', ouvrirParametres);
+document.getElementById('boutonLancer').addEventListener('click', appliquerParametres);
+document.getElementById('boutonRegles')
+    .addEventListener('click', () => {
+        dialogRegles.showModal();
+    });
+
+document.getElementById('boutonFermerRegles')
+    .addEventListener('click', () => {
+        dialogRegles.close();
+    });
+let codePartieActuelle = null;
+let roleLocal = null; // null = jeu local ; 'gauche' = créateur ; 'droite' = joueur qui rejoint
+
+function creerCodePartie() {
+    return Math.random().toString(36).substring(2, 6).toUpperCase();
+}
+
+function ecouterPartie() {
+
+    if (!codePartieActuelle) return;
+
+    onValue(
+        ref(db, 'parties/' + codePartieActuelle),
+        function(snapshot) {
+
+            if (!snapshot.exists()) return;
+
+            const data = snapshot.val();
+
+            if (data.joueurActif === 'gauche' || data.joueurActif === 'droite') {
+                joueurActif = data.joueurActif;
+            }
+
+            if (data.message) {
+                appliquerCoup(data.message);
+            } else {
+            
+                labelMessage.textContent =
+                    'Connecté à ' + codePartieActuelle + ' — À jouer : ' + nomJoueurActif();
+            }
+        }
+    );
+}
+
+async function envoyerMessageTest() {
+
+    if (!codePartieActuelle) {
+        labelMessage.textContent = 'Aucune partie distante active.';
+        return;
+    }
+
+    await set(
+        ref(db, 'parties/' + codePartieActuelle + '/message'),
+        {
+            action: 'poser',
+            valeur: 12,
+            lig: 2,
+            col: 3,
+            joueur: joueurActif,
+            heure: new Date().toLocaleTimeString()
+        }
+    );
+}
+
+function appliquerCoup(coup) {
+    if (coup.type === 'clicGauchePion') {
+        return;
+    }
+
+    // Sécurité : si Firebase nous renvoie notre propre action,
+    // on garde bien le verrou du tour actif.
+    if (coup.emetteur === idAppareil && (coup.action === 'poser' || coup.action === 'remettrePioche')) {
+        origineSelection = null;
+    }
+
+    if (coup.action === 'changerJoueur') {
+        appliquerChangementJoueur(coup);
+        return;
+    }
+    
+    if (coup.action === 'poser') {
+        appliquerPose(coup);
+        return;
+    }
+
+    if (coup.action === 'remettrePioche') {
+        appliquerRetourPioche(coup);
+        return;
+    }
+}
+
+function appliquerChangementJoueur(coup) {
+    if (coup.joueurActif !== 'gauche' && coup.joueurActif !== 'droite') {
+        return;
+    }
+
+    joueurActif = coup.joueurActif;
+    pionSelectionne = null;
+    origineSelection = null;
+    pionDuTour = null;
+    actionFaiteCeTour = false;
+    piocheUtiliseeCeTour = false;
+    pions.forEach(p => p.selectionne = false);
+    labelNombre.textContent = '-';
+    labelMessage.textContent = `À jouer : ${nomJoueurActif()}`;
+    dessinerTout();
+}
+
+function appliquerRetourPioche(coup) {
+    const indexPion = coup.indexPion;
+
+    if (indexPion === undefined || !pions[indexPion]) {
+        labelMessage.textContent = 'Erreur : pion à remettre introuvable';
+        return;
+    }
+
+    remettrePionALaPioche(indexPion);
+
+    if (pionSelectionne === indexPion) {
+        pionSelectionne = null;
+        labelNombre.textContent = '-';
+    }
+
+    pions[indexPion].visible = true;
+    pions[indexPion].selectionne = false;
+
+    labelMessage.textContent = 'Retour pioche reçu.';
+    dessinerTout();
+}
+
+function appliquerPose(coup) {
+
+    const grille =
+        coup.zone === 'joueur1'
+            ? grille1
+            : grille2;
+
+    const zoneLocale = coup.zone;
+
+    const indexPion = coup.indexPion;
+
+    if (indexPion === undefined || !pions[indexPion]) {
+        labelMessage.textContent = 'Erreur : pion reçu introuvable';
+        return;
+    }
+
+    const ancienPion = grille[coup.lig][coup.col];
+    if (ancienPion !== null) {
+        remettrePionALaPioche(ancienPion);
+    }
+
+    retirerPionDeSonEmplacement(indexPion);
+
+    grille[coup.lig][coup.col] = indexPion;
+
+    pions[indexPion].zone = zoneLocale;
+    pions[indexPion].lig = coup.lig;
+    pions[indexPion].col = coup.col;
+    pions[indexPion].visible = true;
+    pions[indexPion].selectionne = false;
+
+    labelMessage.textContent =
+        'Pose reçue : ' +
+        coup.valeur +
+        ' en ligne ' + (coup.lig + 1) +
+        ', colonne ' + (coup.col + 1);
+
+    dessinerTout();
+}
+
+async function creerPartieDistante() {
+    codePartieActuelle = creerCodePartie();
+    roleLocal = 'gauche';
+
+    document.getElementById('codePartie').textContent =
+        'Partie : ' + codePartieActuelle;
+
+    labelMessage.textContent =
+        'Création en cours : ' + codePartieActuelle;
+        nouvellePartie();
+        const valeursPioche = pions.map(p => p.valeur);
+        
+    await set(
+        ref(db, 'parties/' + codePartieActuelle),
+        {
+            creeeLe: Date.now(),
+            valeursPioche: valeursPioche,
+            joueurActif: joueurActif
+        }
+    );
+
+    labelMessage.textContent =
+        'Partie créée : ' + codePartieActuelle;
+        
+    ecouterPartie();
+}
+
+function ouvrirDialogueRejoindrePartie() {
+    inputCodePartie.value = '';
+    dialogRejoindre.showModal();
+    setTimeout(() => inputCodePartie.focus(), 100);
+}
+
+async function rejoindrePartieAvecCode(code) {
+
+    if (!code) {
+        return;
+    }
+
+    const codeMaj = code.trim().toUpperCase();
+
+    if (!codeMaj.match(/^[A-Z0-9]{4}$/)) {
+        labelMessage.textContent = 'Code invalide : il faut 4 caractères.';
+        return;
+    }
+
+    const snapshot = await get(
+        ref(db, 'parties/' + codeMaj)
+    );
+
+    if (snapshot.exists()) {
+
+        codePartieActuelle = codeMaj;
+        roleLocal = 'droite';
+
+        document.getElementById('codePartie').textContent =
+            'Partie : ' + codeMaj;
+
+        const donnees = snapshot.val();
+
+        pions = creerPions(donnees.valeursPioche);
+
+        if (donnees.joueurActif === 'gauche' || donnees.joueurActif === 'droite') {
+            joueurActif = donnees.joueurActif;
+        } else {
+            joueurActif = CONFIG.commence === 1 ? 'gauche' : 'droite';
+        }
+
+        pionSelectionne = null;
+        labelNombre.textContent = '-';
+
+        labelMessage.textContent =
+            'Connecté à ' + codeMaj + ' — À jouer : ' + nomJoueurActif();
+
+        dessinerTout();
+
+        ecouterPartie();
+
+    } else {
+
+        labelMessage.textContent =
+            'Partie inexistante';
+    }
+}
+
+async function rejoindrePartieDistante() {
+    const code = inputCodePartie.value;
+    dialogRejoindre.close();
+    await rejoindrePartieAvecCode(code);
+}
+
+document.getElementById('boutonCreerPartie')
+    .addEventListener('click', creerPartieDistante);
+
+document.getElementById('boutonRejoindrePartie')
+    .addEventListener('click', ouvrirDialogueRejoindrePartie);
+
+document.getElementById('boutonValiderCodePartie')
+    .addEventListener('click', rejoindrePartieDistante);
+
+document.getElementById('boutonAnnulerCodePartie')
+    .addEventListener('click', () => {
+        dialogRejoindre.close();
+    });
+
+inputCodePartie.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+        rejoindrePartieDistante();
+    }
+});
+    
+document.getElementById('boutonAToi')
+    .addEventListener('click', async () => {
+        if (!estMonTour()) {
+            messagePasMonTour();
+            return;
+        }
+
+        changerJoueur();
+        pionSelectionne = null;
+        origineSelection = null;
+        pionDuTour = null;
+        actionFaiteCeTour = false;
+        piocheUtiliseeCeTour = false;
+        pions.forEach(p => p.selectionne = false);
+        labelNombre.textContent = '-';
+        labelMessage.textContent = `À jouer : ${nomJoueurActif()}`;
+        dessinerTout();
+        
+        if (codePartieActuelle) {
+            await update(
+                ref(db, 'parties/' + codePartieActuelle),
+                {
+                    joueurActif: joueurActif,
+                    message: {
+                        action: 'changerJoueur',
+                        emetteur: idAppareil,
+                        joueurActif: joueurActif,
+                        heure: Date.now()
+                    }
+                }
+            );
+        }
+    });
+    
+document.getElementById('boutonEnvoyerMessage')
+    .addEventListener('click', envoyerMessageTest);
+
+nouvellePartie();
+ouvrirParametres();
+</script>
+</body>
+</html>
