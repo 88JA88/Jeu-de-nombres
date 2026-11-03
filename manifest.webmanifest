@@ -1,0 +1,11 @@
+{
+  "name": "Jeu de nombres",
+  "short_name": "Nombres",
+  "description": "Jeu de nombres local ou à distance.",
+  "lang": "fr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#dddddd",
+  "theme_color": "#dddddd"
+}

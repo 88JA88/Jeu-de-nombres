@@ -1,9 +1,10 @@
-!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Nombres chanceux - Action 4</title>
+<link rel="manifest" href="manifest.webmanifest">
 <style>
     body {
         margin: 0;
@@ -63,7 +64,7 @@
     <div id="message">Clic gauche sur un pion pour le choisir.</div>
     <button id="boutonParametres">Nouvelle partie</button>
     <button id="boutonCreerPartie">Créer partie distante</button>
-    <button id="boutonRejoindrePartie">Rejoindre partie</button>
+    <button id="boutonRejoindrePartie">Rejoindre partie distante</button>
     <button id="boutonAToi">À toi !</button>
     <button id="boutonRegles">Règles du jeu</button>
     <button id="boutonEnvoyerMessage">Envoyer message</button>
@@ -104,10 +105,8 @@
     <button id="boutonValiderCodePartie">Rejoindre</button>
     <button id="boutonAnnulerCodePartie">Annuler</button>
 </dialog>
-<script type="module">
+<script>
 'use strict';
-import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-import { getDatabase, ref, set, get, onValue, update } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCNOujBHAg7jGD0Dbhbj3DerKBFjxZhIek",
@@ -119,8 +118,38 @@ const firebaseConfig = {
   appId: "1:762941555289:web:c6c4b563dc437cb4a26748"
 };
 
-const app = initializeApp(firebaseConfig);
-const db = getDatabase(app);
+let db = null;
+let ref = null;
+let set = null;
+let get = null;
+let onValue = null;
+let update = null;
+let chargementFirebase = null;
+
+async function connecterFirebase() {
+    if (db) return;
+    if (chargementFirebase) return chargementFirebase;
+    chargementFirebase = (async () => {
+        const [firebaseApp, firebaseDatabase] = await Promise.all([
+            import("https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js"),
+            import("https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js")
+        ]);
+        const app = firebaseApp.initializeApp(firebaseConfig);
+        db = firebaseDatabase.getDatabase(app);
+        ref = firebaseDatabase.ref;
+        set = firebaseDatabase.set;
+        get = firebaseDatabase.get;
+        onValue = firebaseDatabase.onValue;
+        update = firebaseDatabase.update;
+    })();
+    try {
+        await chargementFirebase;
+    } catch (error) {
+        chargementFirebase = null;
+        labelMessage.textContent = "Jeu distant indisponible : connexion Internet requise.";
+        throw error;
+    }
+}
 
 const CASE = 50;
 const RAYON_PION = 18;
@@ -917,6 +946,12 @@ function appliquerPose(coup) {
 }
 
 async function creerPartieDistante() {
+    try {
+        await connecterFirebase();
+    } catch {
+        return;
+    }
+
     codePartieActuelle = creerCodePartie();
     roleLocal = 'gauche';
 
@@ -928,14 +963,22 @@ async function creerPartieDistante() {
         nouvellePartie();
         const valeursPioche = pions.map(p => p.valeur);
         
-    await set(
-        ref(db, 'parties/' + codePartieActuelle),
-        {
-            creeeLe: Date.now(),
-            valeursPioche: valeursPioche,
-            joueurActif: joueurActif
-        }
-    );
+    try {
+        await set(
+            ref(db, 'parties/' + codePartieActuelle),
+            {
+                creeeLe: Date.now(),
+                valeursPioche: valeursPioche,
+                joueurActif: joueurActif
+            }
+        );
+    } catch {
+        codePartieActuelle = null;
+        roleLocal = null;
+        document.getElementById('codePartie').textContent = 'Aucune partie';
+        labelMessage.textContent = "Jeu distant indisponible : connexion Internet requise.";
+        return;
+    }
 
     labelMessage.textContent =
         'Partie créée : ' + codePartieActuelle;
@@ -962,9 +1005,19 @@ async function rejoindrePartieAvecCode(code) {
         return;
     }
 
-    const snapshot = await get(
-        ref(db, 'parties/' + codeMaj)
-    );
+    try {
+        await connecterFirebase();
+    } catch {
+        return;
+    }
+
+    let snapshot;
+    try {
+        snapshot = await get(ref(db, 'parties/' + codeMaj));
+    } catch {
+        labelMessage.textContent = "Jeu distant indisponible : connexion Internet requise.";
+        return;
+    }
 
     if (snapshot.exists()) {
 
@@ -1066,6 +1119,10 @@ document.getElementById('boutonEnvoyerMessage')
 
 nouvellePartie();
 ouvrirParametres();
+
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js"));
+}
 </script>
 </body>
 </html>
